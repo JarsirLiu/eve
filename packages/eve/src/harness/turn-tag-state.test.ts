@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   accumulateSessionUsage,
   accumulateTurnUsage,
+  extendSessionTokenBudget,
   getSessionTokenLimitViolation,
   getSessionTokenUsage,
   getTurnUsageState,
@@ -322,6 +323,45 @@ describe("session token limits", () => {
     expect(getSessionTokenLimitViolation({ ...session, limits: testCase.limits })).toEqual(
       testCase.expected,
     );
+  });
+
+  it("measures limits from the granted budget baseline after extendSessionTokenBudget", () => {
+    const usage = {
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+      inputTokens: 10,
+      outputTokens: 3,
+      sawCost: false,
+    };
+    const session = {
+      ...setTurnUsageState(makeSession(), { turnId: "turn_0", ...usage, session: usage }),
+      limits: { maxInputTokensPerSession: 10, maxOutputTokensPerSession: 3 },
+    };
+
+    expect(getSessionTokenLimitViolation(session)).toEqual({
+      kind: "input",
+      limit: 10,
+      usedTokens: 10,
+    });
+
+    const extended = extendSessionTokenBudget(session);
+
+    // Both windows reset together so a session near two limits gets one prompt.
+    expect(getSessionTokenLimitViolation({ ...extended, limits: session.limits })).toBeNull();
+
+    const laterUsage = { ...usage, inputTokens: 20, outputTokens: 3 };
+    const later = setTurnUsageState(extended, {
+      turnId: "turn_1",
+      ...laterUsage,
+      session: laterUsage,
+    });
+
+    expect(getSessionTokenLimitViolation({ ...later, limits: session.limits })).toEqual({
+      kind: "input",
+      limit: 10,
+      usedTokens: 10,
+    });
   });
 });
 
