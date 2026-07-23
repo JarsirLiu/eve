@@ -66,6 +66,8 @@ export const ChannelInstrumentationKey = new ContextKey<ChannelInstrumentationPr
   "eve.channelInstrumentation",
 );
 export const ModeKey = new ContextKey<RunMode>("eve.mode");
+/** Model id selected for framework-owned compaction events. */
+export const CompactionModelIdKey = new ContextKey<string>("eve.compactionModelId");
 export const ParentSessionKey = new ContextKey<SessionParent>("eve.parentSession");
 export const SubagentDepthKey = new ContextKey<number>("eve.subagentDepth");
 

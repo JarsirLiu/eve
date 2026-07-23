@@ -26,6 +26,8 @@ export function createCompactionConfig(
     readonly contextWindowTokens?: number;
     readonly lastKnownInputTokens?: number;
     readonly lastKnownPromptMessageCount?: number;
+    readonly lastManualCommandId?: string;
+    readonly lastManualChanged?: boolean;
     readonly thresholdPercent?: number;
   } = {},
 ) {
@@ -40,11 +42,17 @@ export function createCompactionConfig(
     threshold,
   };
 
-  if (input.lastKnownInputTokens !== undefined) {
+  if (
+    input.lastKnownInputTokens !== undefined ||
+    input.lastManualCommandId !== undefined ||
+    input.lastManualChanged !== undefined
+  ) {
     return {
       ...config,
       lastKnownInputTokens: input.lastKnownInputTokens,
       lastKnownPromptMessageCount: input.lastKnownPromptMessageCount,
+      lastManualChanged: input.lastManualChanged,
+      lastManualCommandId: input.lastManualCommandId,
     };
   }
 
@@ -176,6 +184,8 @@ export function projectToDurableSession(session: HarnessSession): DurableSession
     compaction?: {
       lastKnownInputTokens?: number;
       lastKnownPromptMessageCount?: number;
+      lastManualCommandId?: string;
+      lastManualChanged?: boolean;
     };
     continuationToken: string;
     history: HarnessSession["history"];
@@ -196,11 +206,15 @@ export function projectToDurableSession(session: HarnessSession): DurableSession
 
   if (
     session.compaction.lastKnownInputTokens !== undefined ||
-    session.compaction.lastKnownPromptMessageCount !== undefined
+    session.compaction.lastKnownPromptMessageCount !== undefined ||
+    session.compaction.lastManualCommandId !== undefined ||
+    session.compaction.lastManualChanged !== undefined
   ) {
     durable.compaction = {
       lastKnownInputTokens: session.compaction.lastKnownInputTokens,
       lastKnownPromptMessageCount: session.compaction.lastKnownPromptMessageCount,
+      lastManualChanged: session.compaction.lastManualChanged,
+      lastManualCommandId: session.compaction.lastManualCommandId,
     };
   }
   if (session.rootSessionId !== undefined) {
@@ -258,6 +272,8 @@ export function hydrateDurableSession(input: {
       contextWindowTokens: turnAgent.model.contextWindowTokens,
       lastKnownInputTokens: durable.compaction?.lastKnownInputTokens,
       lastKnownPromptMessageCount: durable.compaction?.lastKnownPromptMessageCount,
+      lastManualChanged: durable.compaction?.lastManualChanged,
+      lastManualCommandId: durable.compaction?.lastManualCommandId,
       thresholdPercent: input.compactionOverrides?.thresholdPercent,
     }),
     continuationToken: durable.continuationToken,

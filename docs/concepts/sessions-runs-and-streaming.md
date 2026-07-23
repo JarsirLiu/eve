@@ -34,34 +34,35 @@ curl http://127.0.0.1:2000/eve/v1/session/<sessionId>/stream
 
 The stream is newline-delimited JSON (NDJSON), one event per line:
 
-| Event                     | Meaning                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `session.started`         | A durable session was created.                                                                                   |
-| `turn.started`            | A new turn began.                                                                                                |
-| `message.received`        | An inbound user message was accepted; carries flattened text plus structured text/file parts.                    |
-| `step.started`            | A model step began.                                                                                              |
-| `actions.requested`       | The model requested one or more actions, including tool calls; calls stream before execution.                    |
-| `action.result`           | A tool call returned.                                                                                            |
-| `input.requested`         | The run paused for human input ([HITL](/docs/human-in-the-loop) approval or `ask_question`); carries `requests`. |
-| `subagent.called`         | A subagent was delegated; carries `childSessionId` to attach to.                                                 |
-| `subagent.completed`      | A delegated subagent finished.                                                                                   |
-| `reasoning.appended`      | A reasoning delta (incremental, with cumulative text so far).                                                    |
-| `reasoning.completed`     | The finalized reasoning block.                                                                                   |
-| `message.appended`        | An assistant text delta (incremental, with cumulative text so far).                                              |
-| `message.completed`       | A finalized assistant text block.                                                                                |
-| `result.completed`        | The finalized structured result for a turn that requested an output schema; carries `result`.                    |
-| `compaction.requested`    | Context-window compaction began; carries `modelId`, `sessionId`, `turnId`, `usageInputTokens`.                   |
-| `compaction.completed`    | A compaction checkpoint was written to durable history.                                                          |
-| `authorization.required`  | A connection needs OAuth; carries `name`, `description`, and an `authorization` challenge.                       |
-| `authorization.completed` | A connection's authorization resolved; carries `outcome`.                                                        |
-| `step.completed`          | A model step finished; carries `finishReason` and usage.                                                         |
-| `step.failed`             | A model step failed; carries `{ code, message, details? }`.                                                      |
-| `turn.completed`          | The turn finished.                                                                                               |
-| `turn.failed`             | The turn failed; carries `{ code, message, details? }`.                                                          |
-| `turn.cancelled`          | The turn was cancelled before finishing; always followed by `session.waiting`.                                   |
-| `session.waiting`         | The session parked for the next input; carries the current channel-owned `continuationToken`.                    |
-| `session.failed`          | The session failed.                                                                                              |
-| `session.completed`       | The session reached a terminal end.                                                                              |
+| Event                     | Meaning                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `session.started`         | A durable session was created.                                                                                     |
+| `turn.started`            | A new turn began.                                                                                                  |
+| `message.received`        | An inbound user message was accepted; carries flattened text plus structured text/file parts.                      |
+| `step.started`            | A model step began.                                                                                                |
+| `actions.requested`       | The model requested one or more actions, including tool calls; calls stream before execution.                      |
+| `action.result`           | A tool call returned.                                                                                              |
+| `input.requested`         | The run paused for human input ([HITL](/docs/human-in-the-loop) approval or `ask_question`); carries `requests`.   |
+| `subagent.called`         | A subagent was delegated; carries `childSessionId` to attach to.                                                   |
+| `subagent.completed`      | A delegated subagent finished.                                                                                     |
+| `reasoning.appended`      | A reasoning delta (incremental, with cumulative text so far).                                                      |
+| `reasoning.completed`     | The finalized reasoning block.                                                                                     |
+| `message.appended`        | An assistant text delta (incremental, with cumulative text so far).                                                |
+| `message.completed`       | A finalized assistant text block.                                                                                  |
+| `result.completed`        | The finalized structured result for a turn that requested an output schema; carries `result`.                      |
+| `compaction.requested`    | Context-window compaction began; carries `compactionId`, `trigger`, `modelId`, `sessionId`, and optional `turnId`. |
+| `compaction.completed`    | A compaction checkpoint was written to durable history; carries `compactionId`, `trigger`, and `changed`.          |
+| `compaction.failed`       | A requested compaction failed; carries `compactionId`, `trigger`, `code`, and `sessionId`.                         |
+| `authorization.required`  | A connection needs OAuth; carries `name`, `description`, and an `authorization` challenge.                         |
+| `authorization.completed` | A connection's authorization resolved; carries `outcome`.                                                          |
+| `step.completed`          | A model step finished; carries `finishReason` and usage.                                                           |
+| `step.failed`             | A model step failed; carries `{ code, message, details? }`.                                                        |
+| `turn.completed`          | The turn finished.                                                                                                 |
+| `turn.failed`             | The turn failed; carries `{ code, message, details? }`.                                                            |
+| `turn.cancelled`          | The turn was cancelled before finishing; always followed by `session.waiting`.                                     |
+| `session.waiting`         | The session parked for the next input; carries the current channel-owned `continuationToken`.                      |
+| `session.failed`          | The session failed.                                                                                                |
+| `session.completed`       | The session reached a terminal end.                                                                                |
 
 `reasoning.appended` and `message.appended` stream incremental output as it arrives. When the durable stream writer is busy, eve may coalesce adjacent deltas of the same type; the text remains in source order, and any other event forms an ordering barrier. Each append carries both the new delta and the cumulative text for the current block. The finalized block shows up on `message.completed` and `reasoning.completed`, which is the compatibility path for clients that don't render incremental streaming.
 
@@ -94,6 +95,21 @@ A response is stale when its request is no longer pending: the question or appro
 Responses match pending requests by request ID, so a response to an older request stays a plain user message even while a different question or approval is pending. Like any follow-up message, a stale response clears a pending question and is held while an approval is pending.
 
 For deterministic ordering, send one follow-up at a time and wait for the next `session.waiting` event before sending another message to the same session. See [message delivery and queueing](./execution-model-and-durability#message-delivery-and-queueing) for the current runtime contract.
+
+## Compact a parked session
+
+After an assistant turn reaches `session.waiting`, request maintenance compaction directly:
+
+```bash
+curl -X POST http://127.0.0.1:2000/eve/v1/session/<sessionId>/compact \
+  -H 'content-type: application/json' \
+  -d '{"commandId":"compact-2026-01-01"}'
+# {"commandId":"compact-2026-01-01","ok":true,"sessionId":"<sessionId>","status":"accepted"}
+```
+
+The request does not send a model-visible message and does not start a turn. It is accepted only while the conversation session is parked; an active turn returns `409`. The response acknowledges admission, so continue reading the session stream for `compaction.requested` followed by `compaction.completed` or `compaction.failed`. A successful request may report `changed: false` when there is no compressible history. The session remains parked and can accept the next message after the maintenance operation settles.
+
+The optional `commandId` makes retries idempotent. Reusing it returns the original acknowledgement without applying the compaction twice.
 
 ## Cancel the in-flight turn
 

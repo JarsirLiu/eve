@@ -17,6 +17,7 @@ import {
   type SubagentCalledStreamEvent,
   type SubagentCompletedStreamEvent,
   Client,
+  ClientError,
   ClientSession,
 } from "#client/index.js";
 import { loadDevelopmentEnvironmentFiles } from "#cli/dev/environment.js";
@@ -725,6 +726,19 @@ export class EveTUIRunner {
           continue;
         }
 
+        if (command?.type === "compact") {
+          try {
+            await this.#executeCompactionCommand();
+          } catch (error) {
+            if (isInterruptedError(error)) return;
+            throw error;
+          }
+          pendingInputResponses = undefined;
+          streamWithoutPrompt = false;
+          prompt = undefined;
+          continue;
+        }
+
         // Help renders locally; unlike extension commands it must work even
         // without a prompt-command handler (e.g. remote --url sessions).
         if (command?.type === "help") {
@@ -1029,6 +1043,56 @@ export class EveTUIRunner {
     }
 
     return this.#createTUIStreamResult(response, () => abortController.abort());
+  }
+
+  async #executeCompactionCommand(): Promise<void> {
+    let accepted: Awaited<ReturnType<ClientSession["compact"]>>;
+    try {
+      accepted = await this.#session.compact();
+    } catch (error) {
+      this.#renderCommandOutcome(formatCompactionRequestError(error));
+      return;
+    }
+
+    this.#renderCommandOutcome("Compaction requested.");
+
+    try {
+      for await (const event of this.#session.stream()) {
+        if (
+          event.type === "compaction.requested" &&
+          event.data.trigger === "manual" &&
+          event.data.compactionId === accepted.commandId
+        ) {
+          this.#renderCommandOutcome("Compaction started.");
+          continue;
+        }
+
+        if (
+          event.type === "compaction.completed" &&
+          event.data.trigger === "manual" &&
+          event.data.compactionId === accepted.commandId
+        ) {
+          this.#renderCommandOutcome(
+            event.data.changed ? "Compaction complete." : "No context changes were needed.",
+          );
+          return;
+        }
+
+        if (
+          event.type === "compaction.failed" &&
+          event.data.trigger === "manual" &&
+          event.data.compactionId === accepted.commandId
+        ) {
+          this.#renderCommandOutcome(`Compaction failed: ${event.data.message}`);
+          return;
+        }
+      }
+    } catch (error) {
+      if (isInterruptedError(error)) throw error;
+      this.#renderCommandOutcome(
+        `Compaction was accepted, but its result could not be observed: ${toErrorMessage(error)}`,
+      );
+    }
   }
 
   /**
@@ -1482,6 +1546,19 @@ function formatAgentUpdateNotice(
   }
 
   return "Agent updated.";
+}
+
+function formatCompactionRequestError(error: unknown): string {
+  if (error instanceof ClientError && error.status === 409) {
+    return "Cannot compact while a turn is active. Wait for the reply to finish, then try /compact again.";
+  }
+  if (error instanceof ClientError && error.status === 404) {
+    return "Cannot compact: no active session was found.";
+  }
+  if (error instanceof Error && /no session id/i.test(error.message)) {
+    return "Cannot compact: send a message first to start a session.";
+  }
+  return `Compaction failed: ${toErrorMessage(error)}`;
 }
 
 type EveStreamTranslatorInput = {

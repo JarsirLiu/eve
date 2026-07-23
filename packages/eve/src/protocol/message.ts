@@ -469,10 +469,12 @@ export interface TurnCancelledStreamEvent {
  */
 export interface CompactionRequestedStreamEvent {
   data: {
+    compactionId: string;
     modelId: string;
     sequence: number;
     sessionId: string;
-    turnId: string;
+    trigger: "automatic" | "manual";
+    turnId?: string;
     usageInputTokens: number | null;
   };
   type: "compaction.requested";
@@ -484,12 +486,28 @@ export interface CompactionRequestedStreamEvent {
  */
 export interface CompactionCompletedStreamEvent {
   data: {
+    changed: boolean;
+    compactionId: string;
     modelId: string;
     sequence: number;
     sessionId: string;
-    turnId: string;
+    trigger: "automatic" | "manual";
+    turnId?: string;
   };
   type: "compaction.completed";
+}
+
+/** Stream event emitted when an admitted manual compaction fails. */
+export interface CompactionFailedStreamEvent {
+  data: {
+    code: string;
+    compactionId: string;
+    message: string;
+    sequence: number;
+    sessionId: string;
+    trigger: "manual";
+  };
+  type: "compaction.failed";
 }
 
 /**
@@ -584,6 +602,7 @@ export interface SessionCompletedStreamEvent {
  */
 export type HandleMessageStreamEvent = (
   | CompactionCompletedStreamEvent
+  | CompactionFailedStreamEvent
   | CompactionRequestedStreamEvent
   | AuthorizationCompletedStreamEvent
   | AuthorizationRequiredStreamEvent
@@ -1322,20 +1341,26 @@ export function createTurnCancelledEvent(input: {
  * Creates the `compaction.requested` event for one runtime compaction pass.
  */
 export function createCompactionRequestedEvent(input: {
+  readonly compactionId?: string;
   readonly modelId: string;
   readonly sequence: number;
   readonly sessionId: string;
-  readonly turnId: string;
+  readonly turnId?: string;
+  readonly trigger?: "automatic" | "manual";
   readonly usageInputTokens: number | undefined;
 }): CompactionRequestedStreamEvent {
+  const data: CompactionRequestedStreamEvent["data"] = {
+    modelId: input.modelId,
+    compactionId: input.compactionId ?? input.turnId ?? crypto.randomUUID(),
+    sequence: input.sequence,
+    sessionId: input.sessionId,
+    trigger: input.trigger ?? "automatic",
+    usageInputTokens: input.usageInputTokens ?? null,
+  };
+  if (input.turnId !== undefined) data.turnId = input.turnId;
+
   return {
-    data: {
-      modelId: input.modelId,
-      sequence: input.sequence,
-      sessionId: input.sessionId,
-      turnId: input.turnId,
-      usageInputTokens: input.usageInputTokens ?? null,
-    },
+    data,
     type: "compaction.requested",
   };
 }
@@ -1344,20 +1369,39 @@ export function createCompactionRequestedEvent(input: {
  * Creates the `compaction.completed` event for one appended checkpoint.
  */
 export function createCompactionCompletedEvent(input: {
+  readonly changed?: boolean;
+  readonly compactionId?: string;
   readonly modelId: string;
   readonly sequence: number;
   readonly sessionId: string;
-  readonly turnId: string;
+  readonly trigger?: "automatic" | "manual";
+  readonly turnId?: string;
 }): CompactionCompletedStreamEvent {
+  const data: CompactionCompletedStreamEvent["data"] = {
+    modelId: input.modelId,
+    changed: input.changed ?? true,
+    compactionId: input.compactionId ?? input.turnId ?? crypto.randomUUID(),
+    sequence: input.sequence,
+    sessionId: input.sessionId,
+    trigger: input.trigger ?? "automatic",
+  };
+  if (input.turnId !== undefined) data.turnId = input.turnId;
+
   return {
-    data: {
-      modelId: input.modelId,
-      sequence: input.sequence,
-      sessionId: input.sessionId,
-      turnId: input.turnId,
-    },
+    data,
     type: "compaction.completed",
   };
+}
+
+/** Creates the failure event for an asynchronously admitted manual compaction. */
+export function createCompactionFailedEvent(input: {
+  readonly code: string;
+  readonly compactionId: string;
+  readonly message: string;
+  readonly sequence: number;
+  readonly sessionId: string;
+}): CompactionFailedStreamEvent {
+  return { data: { ...input, trigger: "manual" }, type: "compaction.failed" };
 }
 
 /**

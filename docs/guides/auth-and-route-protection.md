@@ -12,10 +12,11 @@ Start with route auth.
 
 ## Route auth
 
-The route-auth policy lives on the HTTP channel factory (`agent/channels/eve.ts`) and guards three routes:
+The route-auth policy lives on the HTTP channel factory (`agent/channels/eve.ts`) and guards the session routes:
 
 - `POST /eve/v1/session`
 - `POST /eve/v1/session/:sessionId`
+- `POST /eve/v1/session/:sessionId/compact`
 - `GET /eve/v1/session/:sessionId/stream`
 
 These routes are protected by the channel's auth policy. eve fails closed by default: production browser traffic is rejected unless you configure an authenticator that accepts it, and anonymous access requires an explicit `none()`.

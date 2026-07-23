@@ -48,7 +48,7 @@ Declare routes with the `POST()` and `GET()` helpers. Each route handler receive
 
 - `send(message, { auth, continuationToken, state?, title? })` starts or resumes a session. `title` overrides the new workflow session's display title without changing the model message. Returns a `Session`.
 - `cancel({ continuationToken, turnId? })` requests cancellation of the active turn on the session that owns the token. See [Cancel a turn](#cancel-a-turn).
-- `getSession(sessionId)` looks up an existing session. The returned `Session` exposes `getEventStream({ startIndex? })` for streaming and `cancel({ turnId? })` for session-id-addressed cancellation.
+- `getSession(sessionId)` looks up an existing session. The returned `Session` exposes `getEventStream({ startIndex? })` for streaming, `cancel({ turnId? })` for session-id-addressed cancellation, and `compact({ commandId? })` for maintenance compaction.
 - `receive(channel, ...)` hands inbound work to a different channel for cross-channel hand-off.
 - `params` holds route parameters extracted from the path pattern.
 - `waitUntil(promise)` extends the request lifetime for background work.
@@ -84,6 +84,20 @@ Semantics:
 - The route owns authentication of the inbound stop request, exactly as for `send()`.
 
 When you already hold a `Session` — returned by `send()` or `getSession(sessionId)` — call `session.cancel({ turnId? })` to request the same cancellation addressed by session id.
+
+## Compact a session
+
+Manual compaction is a maintenance request for a parked conversation session. It does not send a message or create a turn:
+
+```ts
+POST("/threads/:threadId/compact", async (_req, { getSession, params }) => {
+  const session = getSession(params.threadId);
+  const result = await session.compact({ commandId: "compact-2026-01-01" });
+  return Response.json(result, { status: 202 });
+});
+```
+
+The returned status means that the command was accepted. Read the session event stream for `compaction.completed` or `compaction.failed`. Manual compaction bypasses the automatic threshold, preserves framework-owned session state, and leaves the session parked. An active turn is rejected rather than cancelled or queued; retries with the same `commandId` are idempotent.
 
 ## CORS
 

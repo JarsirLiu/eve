@@ -39,6 +39,9 @@ export const EVE_MESSAGE_STREAM_ROUTE_PATTERN = `${EVE_ROUTE_PREFIX}/session/:se
  */
 export const EVE_CANCEL_TURN_ROUTE_PATTERN = `${EVE_ROUTE_PREFIX}/session/:sessionId/cancel`;
 
+/** Stable framework-owned route pattern for manually compacting a session. */
+export const EVE_COMPACT_SESSION_ROUTE_PATTERN = `${EVE_ROUTE_PREFIX}/session/:sessionId/compact`;
+
 /**
  * Framework-owned route pattern for dispatching one authored schedule
  * exactly once from the dev server.
@@ -122,6 +125,11 @@ export function createEveContinueSessionRoutePath(sessionId: string): string {
  */
 export function createEveCancelTurnRoutePath(sessionId: string): string {
   return `${EVE_ROUTE_PREFIX}/session/${encodeURIComponent(sessionId)}/cancel`;
+}
+
+/** Creates the stable framework-owned manual-compaction route path. */
+export function createEveCompactSessionRoutePath(sessionId: string): string {
+  return `${EVE_ROUTE_PREFIX}/session/${encodeURIComponent(sessionId)}/compact`;
 }
 
 /**

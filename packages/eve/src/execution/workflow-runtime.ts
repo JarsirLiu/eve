@@ -8,6 +8,8 @@ import {
 import type {
   CancelTurnInput,
   CancelTurnResult,
+  CompactSessionInput,
+  CompactSessionResult,
   DeliverInput,
   GetEventStreamOptions,
   HookPayload,
@@ -41,7 +43,12 @@ import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import { buildRunContext } from "#execution/runtime-context.js";
 import { parseNdjsonStream } from "#execution/ndjson-stream.js";
-import { RuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import {
+  RuntimeCompactionConflictError,
+  RuntimeNoActiveSessionError,
+  RuntimeSessionNotFoundError,
+} from "#execution/runtime-errors.js";
+import { sessionCompactionHookToken } from "#execution/session-compaction-hook.js";
 import {
   sessionCancelHookToken,
   type TurnCancelPayload,
@@ -174,6 +181,10 @@ export function createWorkflowRuntime(config: {
       return await requestWorkflowTurnCancellation(input);
     },
 
+    async requestCompaction(input: CompactSessionInput): Promise<CompactSessionResult> {
+      return await requestWorkflowCompaction(input);
+    },
+
     async deliver(input: DeliverInput): Promise<{ sessionId: string }> {
       const hookPayload: Extract<HookPayload, { kind: "deliver" }> = {
         auth: input.auth,
@@ -221,6 +232,40 @@ export function createWorkflowRuntime(config: {
       }
     },
   };
+}
+
+/** Admits one manual compaction command to a parked session driver. */
+export async function requestWorkflowCompaction(
+  input: CompactSessionInput,
+): Promise<CompactSessionResult> {
+  const commandId = input.commandId ?? crypto.randomUUID();
+  const run = getRun(input.sessionId);
+  try {
+    if (!(await run.exists)) {
+      throw new RuntimeSessionNotFoundError(input.sessionId);
+    }
+  } catch (error) {
+    if (WorkflowRunNotFoundError.is(error)) {
+      throw new RuntimeSessionNotFoundError(input.sessionId);
+    }
+    throw error;
+  }
+
+  try {
+    await resumeHook(sessionCompactionHookToken(input.sessionId), {
+      commandId,
+      kind: "compact",
+    });
+    return { commandId, status: "accepted" };
+  } catch (error) {
+    if (HookNotFoundError.is(error)) {
+      if (!(await run.exists)) {
+        throw new RuntimeSessionNotFoundError(input.sessionId);
+      }
+      throw new RuntimeCompactionConflictError(input.sessionId);
+    }
+    throw error;
+  }
 }
 
 /** Requests cancellation through a session's stable workflow hook. */

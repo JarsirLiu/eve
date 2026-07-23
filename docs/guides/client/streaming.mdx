@@ -19,6 +19,31 @@ const result = await response.result();
 
 Cancellation does not replace stream consumption. Continue reading the response to observe its terminal `turn.cancelled` and `session.waiting` boundary and to advance the client session cursor normally.
 
+## Request maintenance compaction
+
+When a conversation is parked after a turn, request compaction without adding a user message or starting another model turn:
+
+```ts
+const session = client.session();
+const response = await session.send("Summarize the latest forecast.");
+await response.result();
+
+const compacted = await session.compact({ commandId: "compact-2026-01-01" });
+console.log(compacted.status, compacted.commandId);
+
+for await (const event of session.stream()) {
+  if (event.type === "compaction.completed") {
+    console.log("compaction changed history:", event.data.changed);
+    break;
+  }
+  if (event.type === "compaction.failed") {
+    throw new Error(event.data.message);
+  }
+}
+```
+
+`compact()` returns after the request is admitted. It is valid for parked conversation sessions; an active turn is rejected with `409`, and no new session is created. Observe the event stream for completion or failure. Manual compaction bypasses the automatic threshold check but uses the same compaction policy and durable state preservation. A successful no-op reports `changed: false`.
+
 ## Aggregate a turn
 
 Use `result()` when you only need the final turn summary:

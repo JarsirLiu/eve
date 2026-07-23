@@ -9,6 +9,7 @@ import { dispatchDynamicToolEvent } from "#context/dynamic-tool-lifecycle.js";
 import { AuthKey, CapabilitiesKey, ModeKey } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { runStep } from "#context/run-step.js";
+import { withContextScope } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
 import { getHarnessEmissionState } from "#harness/emission.js";
 import { isTurnCancellation, throwIfTurnAborted } from "#harness/turn-cancellation.js";
@@ -54,6 +55,7 @@ import {
   type TurnWorkflowDispatchInput,
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { createExecutionNodeStep } from "#execution/node-step.js";
+import { forceCompactMessages, preserveFrameworkStateOnCompaction } from "#execution/compaction.js";
 import { routeDeliverPayload } from "#execution/subagent-hitl-proxy.js";
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
@@ -66,6 +68,10 @@ import {
   turnWorkflowReference,
 } from "#execution/workflow-runtime.js";
 import { resumeHook } from "#internal/workflow/runtime.js";
+import { resolveCompactionModel } from "#harness/compaction.js";
+import { resolveRuntimeModelReference } from "#runtime/agent/resolve-model.js";
+import { normalizeSerializableError } from "#execution/workflow-errors.js";
+import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
 
 /**
  * Result of one durable harness step, consumed by the turn workflow.
@@ -111,6 +117,107 @@ export type DurableStepResult =
     };
 
 export type { TurnStepInput };
+
+export interface ManualCompactionStepResult {
+  readonly changed: boolean;
+  readonly error?: unknown;
+  readonly modelId: string;
+  readonly ok: boolean;
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}
+
+/** Compacts a parked session and returns a replacement durable snapshot. */
+export async function compactSessionStep(input: {
+  readonly commandId: string;
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<ManualCompactionStepResult> {
+  "use step";
+
+  const durable = await readDurableSession(input.sessionState);
+  const ctx = await deserializeContext(input.serializedContext);
+  const bundle = ctx.require(BundleKey);
+  const session = hydrateDurableSession({
+    compactionOverrides: {
+      thresholdPercent: bundle.resolvedAgent.config.compaction?.thresholdPercent,
+    },
+    durable,
+    turnAgent: bundle.turnAgent,
+  });
+
+  if (durable.compaction?.lastManualCommandId === input.commandId) {
+    return {
+      changed: durable.compaction.lastManualChanged ?? false,
+      modelId: session.agent.compactionModelReference?.id ?? session.agent.modelReference.id,
+      ok: true,
+      serializedContext: input.serializedContext,
+      sessionState: input.sessionState,
+    };
+  }
+
+  try {
+    const scoped = await withContextScope(ctx, session, async (scopedSession) => {
+      const activeModel = await resolveRuntimeModelReference(scopedSession.agent.modelReference, {
+        moduleMap: bundle.moduleMap,
+        nodeId: bundle.nodeId,
+      });
+      const compaction = await resolveCompactionModel({
+        compactionModelReference: scopedSession.agent.compactionModelReference,
+        model: activeModel,
+        modelReference: scopedSession.agent.modelReference,
+        resolveModel: (reference) =>
+          resolveRuntimeModelReference(reference, {
+            moduleMap: bundle.moduleMap,
+            nodeId: bundle.nodeId,
+          }),
+      });
+      const compacted =
+        scopedSession.history.length === 0
+          ? { changed: false, messages: [] }
+          : await forceCompactMessages({
+              config: scopedSession.compaction,
+              messages: [...scopedSession.history],
+              model: compaction.model,
+              onCompaction: preserveFrameworkStateOnCompaction,
+              providerOptions: compaction.providerOptions,
+            });
+      const nextSession = {
+        ...scopedSession,
+        compaction: {
+          ...scopedSession.compaction,
+          lastManualChanged: compacted.changed,
+          lastManualCommandId: input.commandId,
+        },
+        history: compacted.messages,
+      };
+      return {
+        result: {
+          changed: compacted.changed,
+          modelId: formatLanguageModelGatewayId(compaction.model),
+        },
+        session: nextSession,
+      };
+    });
+    const nextSession = scoped.session;
+    return {
+      changed: scoped.result.changed,
+      modelId: scoped.result.modelId,
+      ok: true,
+      serializedContext: serializeContext(ctx),
+      sessionState: createDurableSessionState({ session: nextSession }),
+    };
+  } catch (error) {
+    return {
+      changed: false,
+      error: normalizeSerializableError(error),
+      modelId: session.agent.compactionModelReference?.id ?? session.agent.modelReference.id,
+      ok: false,
+      serializedContext: input.serializedContext,
+      sessionState: input.sessionState,
+    };
+  }
+}
 
 /**
  * Runs one atomic harness step inside a durable `"use step"` boundary.

@@ -119,6 +119,31 @@ describe("ClientSession", () => {
     await expect(createSession().cancel()).rejects.toThrow("Session has no session ID");
   });
 
+  it("requests manual compaction through the session route", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json(
+          { commandId: "cmd-1", ok: true, sessionId: "session_1", status: "accepted" },
+          { status: 202 },
+        ),
+      );
+    const session = createSession({ sessionId: "session_1", streamIndex: 0 });
+
+    await expect(session.compact({ commandId: "cmd-1" })).resolves.toEqual({
+      commandId: "cmd-1",
+      status: "accepted",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://eve.test/eve/v1/session/session_1/compact",
+      expect.objectContaining({
+        body: JSON.stringify({ commandId: "cmd-1" }),
+        method: "POST",
+      }),
+    );
+  });
+
   it("rejects a cancel response for a different session", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json(

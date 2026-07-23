@@ -1,6 +1,11 @@
 import { type FilePart, type TextPart, type UserContent } from "ai";
 
-import type { CancelTurnResult, SessionAuthContext, SessionCallback } from "#channel/types.js";
+import type {
+  CancelTurnResult,
+  CompactSessionResult,
+  SessionAuthContext,
+  SessionCallback,
+} from "#channel/types.js";
 import type { CancelTurnResponse } from "#protocol/cancel-turn.js";
 import { parseSessionCallback } from "#channel/session-callback.js";
 import { hasInternalRefScheme } from "#internal/attachments/url-refs.js";
@@ -17,7 +22,16 @@ import {
   EVE_STREAM_FORMAT_HEADER,
   EVE_STREAM_VERSION_HEADER,
 } from "#protocol/message.js";
-import { EVE_CANCEL_TURN_ROUTE_PATTERN, EVE_INFO_ROUTE_PATH } from "#protocol/routes.js";
+import {
+  EVE_CANCEL_TURN_ROUTE_PATTERN,
+  EVE_COMPACT_SESSION_ROUTE_PATTERN,
+  EVE_INFO_ROUTE_PATH,
+} from "#protocol/routes.js";
+import type { CompactSessionResponse } from "#protocol/compact-session.js";
+import {
+  RuntimeCompactionConflictError,
+  RuntimeSessionNotFoundError,
+} from "#execution/runtime-errors.js";
 import { type InputResponse, isInputResponse } from "#runtime/input/types.js";
 import { type AuthFn, routeAuth } from "#public/channels/auth.js";
 import {
@@ -358,6 +372,56 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         );
       }),
 
+      POST(EVE_COMPACT_SESSION_ROUTE_PATTERN, async (req, args) => {
+        const authResult = await routeAuth(req, input.auth);
+        if (authResult instanceof Response) return authResult;
+
+        const sessionId = args.params.sessionId;
+        if (!sessionId) {
+          return Response.json({ error: "Missing session id.", ok: false }, { status: 400 });
+        }
+
+        const body = await readOptionalCommandBody(req);
+        if (body instanceof Response) return body;
+
+        try {
+          const agent = readRouteAgent(args);
+          if (agent === undefined) throw new Error("Missing route agent.");
+          if (agent.requestCompaction === undefined) {
+            throw new Error("Session compaction is not available.");
+          }
+          const result: CompactSessionResult = await agent.requestCompaction({
+            commandId: body.commandId,
+            sessionId,
+          });
+          return Response.json(
+            { ...result, ok: true, sessionId } satisfies CompactSessionResponse,
+            {
+              headers: {
+                "cache-control": "no-store",
+                [EVE_SESSION_ID_HEADER]: sessionId,
+              },
+              status: 202,
+            },
+          );
+        } catch (error) {
+          if (error instanceof RuntimeCompactionConflictError) {
+            return Response.json(
+              { code: error.code, error: error.message, ok: false, sessionId },
+              { status: 409 },
+            );
+          }
+          if (error instanceof RuntimeSessionNotFoundError) {
+            return Response.json({ error: error.message, ok: false }, { status: 404 });
+          }
+          const errorId = logError(log, "manual compaction request failed", error, { sessionId });
+          return Response.json(
+            { error: "Failed to request session compaction.", errorId, ok: false },
+            { status: 500 },
+          );
+        }
+      }),
+
       GET("/eve/v1/session/:sessionId/stream", async (req, { getSession, params }) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
@@ -627,6 +691,37 @@ async function parseCancelTurnBody(req: Request): Promise<ParsedCancelTurnBody |
     );
   }
   return { turnId };
+}
+
+async function readOptionalCommandBody(
+  req: Request,
+): Promise<{ readonly commandId?: string } | Response> {
+  let text: string;
+  try {
+    text = await req.text();
+  } catch {
+    return Response.json({ error: "Unreadable request body.", ok: false }, { status: 400 });
+  }
+  if (text.trim().length === 0) return {};
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return Response.json({ error: "Invalid JSON body.", ok: false }, { status: 400 });
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return Response.json({ error: "Expected a JSON object.", ok: false }, { status: 400 });
+  }
+  const commandId = (payload as { commandId?: unknown }).commandId;
+  if (commandId === undefined) return {};
+  if (typeof commandId !== "string" || commandId.length === 0) {
+    return Response.json(
+      { error: "Expected 'commandId' to be a non-empty string.", ok: false },
+      { status: 400 },
+    );
+  }
+  return { commandId };
 }
 
 function createSendPayload(

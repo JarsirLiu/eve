@@ -9,6 +9,8 @@ import type { Session, SessionHandle } from "#channel/session.js";
 import type {
   CancelTurnInput,
   CancelTurnResult,
+  CompactSessionInput,
+  CompactSessionResult,
   DeliverInput,
   DeliverPayload,
   GetEventStreamOptions,
@@ -22,7 +24,13 @@ import type { GenericChannelDefinition, GenericReceiveInput } from "#shared/chan
 
 declare const CHANNEL_METADATA_TYPE: unique symbol;
 
-export type { CancelTurnInput, CancelTurnResult, GetEventStreamOptions } from "#channel/types.js";
+export type {
+  CancelTurnInput,
+  CancelTurnResult,
+  CompactSessionInput,
+  CompactSessionResult,
+  GetEventStreamOptions,
+} from "#channel/types.js";
 export type { Session, SessionHandle } from "#channel/session.js";
 export type { ChannelCors, ChannelCorsOptions } from "#channel/cors.js";
 export { GET, POST, PUT, PATCH, DELETE, WS } from "#channel/routes.js";
@@ -136,6 +144,8 @@ export interface Agent {
    * Both outcomes are successful.
    */
   cancelTurn(input: CancelTurnInput): Promise<CancelTurnResult>;
+  /** Requests compaction of a parked conversation session. */
+  requestCompaction?(input: CompactSessionInput): Promise<CompactSessionResult>;
   /**
    * Sends a follow-up message to a session that is currently parked waiting
    * for input. Throws if no parked session exists for the supplied

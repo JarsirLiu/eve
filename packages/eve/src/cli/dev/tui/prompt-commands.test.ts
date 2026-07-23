@@ -13,6 +13,10 @@ describe("parsePromptCommand", () => {
     expect(parsePromptCommand("/new")).toEqual({ type: "new" });
   });
 
+  it("parses /compact", () => {
+    expect(parsePromptCommand("/compact")).toEqual({ type: "compact" });
+  });
+
   it("parses /exit and its /quit alias", () => {
     expect(parsePromptCommand("/exit")).toEqual({ type: "exit" });
     expect(parsePromptCommand("/quit")).toEqual({ type: "exit" });
@@ -129,6 +133,7 @@ describe("promptCommandsFor", () => {
 describe("isPromptControlCommand", () => {
   it("is true exactly for recognized commands", () => {
     expect(isPromptControlCommand("/new")).toBe(true);
+    expect(isPromptControlCommand("/compact")).toBe(true);
     expect(isPromptControlCommand("/model gpt-5")).toBe(true);
     expect(isPromptControlCommand("/unknown")).toBe(false);
     expect(isPromptControlCommand("hello")).toBe(false);

@@ -41,6 +41,7 @@ Each command echoes as an invocation line, asks through a bordered panel that ta
 | `/vc:install` | Installs the Vercel CLI. Available locally and on a remote session.                                                                                          |
 | `/vc:login`   | Logs in to Vercel locally. On a remote session, resolves the deployment's project, refreshes its OIDC token, and confirms any required Trusted Sources rule. |
 | `/loglevel`   | Switches which logs the transcript shows. See [Control what logs show](#control-what-logs-show).                                                             |
+| `/compact`    | Requests compaction of the current session context without sending a model message.                                                                          |
 | `/new`        | Starts a fresh session.                                                                                                                                      |
 | `/exit`       | Quits the TUI.                                                                                                                                               |
 | `/help`       | Lists the commands available for the current local or remote session.                                                                                        |

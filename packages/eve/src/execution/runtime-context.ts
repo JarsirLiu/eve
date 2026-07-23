@@ -6,6 +6,7 @@ import {
   CapabilitiesKey,
   ChannelInstrumentationKey,
   ChannelRequestIdKey,
+  CompactionModelIdKey,
   ContinuationTokenKey,
   InitiatorAuthKey,
   ModeKey,
@@ -39,6 +40,10 @@ export function buildRunContext(input: {
 
   ctx.set(ContinuationTokenKey, run.continuationToken ?? "");
   ctx.set(ModeKey, run.mode);
+  const compactionModelId = bundle.turnAgent?.compactionModel?.id ?? bundle.turnAgent?.model?.id;
+  if (compactionModelId !== undefined) {
+    ctx.set(CompactionModelIdKey, compactionModelId);
+  }
   ctx.set(AuthKey, auth);
   ctx.set(InitiatorAuthKey, run.initiatorAuth ?? auth);
 

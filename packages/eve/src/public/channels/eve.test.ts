@@ -20,6 +20,7 @@ import {
   type Session as RuntimeSession,
 } from "#context/keys.js";
 import { createMessageCompletedEvent } from "#protocol/message.js";
+import { RuntimeCompactionConflictError } from "#execution/runtime-errors.js";
 
 /**
  * Unit coverage for the inbound HTTP route's message-body parser and
@@ -162,8 +163,51 @@ function createEveCancelHandler(input: EveChannelInput) {
   };
 }
 
+/** Creates a POST handler test harness for the manual-compaction route. */
+function createEveCompactHandler(input: EveChannelInput) {
+  const channel = eveChannel(input);
+  const compactRoute = channel.routes.find(
+    (r) => r.method === "POST" && r.path === "/eve/v1/session/:sessionId/compact",
+  );
+  if (!compactRoute) throw new Error("No compact POST route found");
+
+  const agent = createMockAgent();
+  agent.requestCompaction.mockResolvedValue({ commandId: "command-1", status: "accepted" });
+
+  return {
+    requestCompaction: agent.requestCompaction,
+    async fetch(req: Request) {
+      const args = attachRouteAgent(
+        {
+          send: vi.fn(),
+          cancel: vi.fn(),
+          getSession: vi.fn(),
+          receive: vi.fn() as any,
+          params: { sessionId: "test-session-id" },
+          waitUntil: () => undefined,
+          requestIp: "127.0.0.1",
+        } satisfies RouteHandlerArgs,
+        agent,
+      );
+      return (compactRoute as any).handler(req, args);
+    },
+  };
+}
+
 function cancelRequest(body?: unknown): Request {
   return new Request("https://example.com/eve/v1/session/test-session-id/cancel", {
+    ...(body === undefined
+      ? {}
+      : {
+          body: typeof body === "string" ? body : JSON.stringify(body),
+          headers: { "content-type": "application/json" },
+        }),
+    method: "POST",
+  });
+}
+
+function compactRequest(body?: unknown): Request {
+  return new Request("https://example.com/eve/v1/session/test-session-id/compact", {
     ...(body === undefined
       ? {}
       : {
@@ -1355,5 +1399,56 @@ describe("eveChannel — cancel turn", () => {
       error: "Failed to cancel the turn.",
       ok: false,
     });
+  });
+});
+
+describe("eveChannel — manual compaction", () => {
+  it("admits a compaction command with the session id and command id", async () => {
+    const handler = createEveCompactHandler({ auth: none() });
+
+    const response = await handler.fetch(compactRequest({ commandId: "command-7" }));
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("x-eve-session-id")).toBe("test-session-id");
+    await expect(response.json()).resolves.toEqual({
+      commandId: "command-1",
+      ok: true,
+      sessionId: "test-session-id",
+      status: "accepted",
+    });
+    expect(handler.requestCompaction).toHaveBeenCalledWith({
+      commandId: "command-7",
+      sessionId: "test-session-id",
+    });
+  });
+
+  it("rejects malformed command bodies before runtime admission", async () => {
+    const handler = createEveCompactHandler({ auth: none() });
+
+    const response = await handler.fetch(compactRequest({ commandId: 7 }));
+
+    expect(response.status).toBe(400);
+    expect(handler.requestCompaction).not.toHaveBeenCalled();
+  });
+
+  it("maps a parked-session conflict to 409", async () => {
+    const handler = createEveCompactHandler({ auth: none() });
+    handler.requestCompaction.mockRejectedValue(
+      new RuntimeCompactionConflictError("test-session-id"),
+    );
+
+    const response = await handler.fetch(compactRequest());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "ACTIVE_TURN", ok: false });
+  });
+
+  it("rejects unauthenticated compaction requests before runtime admission", async () => {
+    const handler = createEveCompactHandler({ auth: [] });
+
+    const response = await handler.fetch(compactRequest());
+
+    expect(response.status).toBe(401);
+    expect(handler.requestCompaction).not.toHaveBeenCalled();
   });
 });

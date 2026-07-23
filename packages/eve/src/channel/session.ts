@@ -1,6 +1,6 @@
 import type { ContextAccessor } from "#context/key.js";
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
-import type { CancelTurnResult, Runtime } from "#channel/types.js";
+import type { CancelTurnResult, CompactSessionResult, Runtime } from "#channel/types.js";
 import type { SessionAuth } from "#context/keys.js";
 import { AuthKey, ContinuationTokenKey, InitiatorAuthKey, SessionIdKey } from "#context/keys.js";
 
@@ -23,6 +23,8 @@ export interface Session {
    * `session.waiting` on the event stream.
    */
   cancel(options?: { turnId?: string }): Promise<CancelTurnResult>;
+  /** Requests compaction of this parked conversation session. */
+  compact?(options?: { commandId?: string }): Promise<CompactSessionResult>;
   /**
    * Opens the durable event stream. Negative start indexes read relative to
    * the current tail (`-1` starts at the latest event).
@@ -52,6 +54,12 @@ export function createSession(id: string, continuationToken: string, runtime: Ru
     continuationToken,
     async cancel(options?: { turnId?: string }) {
       return runtime.cancelTurn({ sessionId: id, turnId: options?.turnId });
+    },
+    async compact(options?: { commandId?: string }) {
+      if (runtime.requestCompaction === undefined) {
+        throw new Error("This runtime does not support session compaction.");
+      }
+      return runtime.requestCompaction({ commandId: options?.commandId, sessionId: id });
     },
     async getEventStream(options?: { startIndex?: number }) {
       return runtime.getEventStream(id, options);

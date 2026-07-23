@@ -230,6 +230,12 @@ function createRouteAgent(runtime: Runtime, requestId: string | undefined): Agen
       const deliverInput: DeliverInput = { ...input, requestId }; // Avoid mutating a frozen caller input.
       return await runtime.deliver(deliverInput);
     },
+    async requestCompaction(input) {
+      if (runtime.requestCompaction === undefined) {
+        throw new Error("Session compaction is not available.");
+      }
+      return await runtime.requestCompaction(input);
+    },
     async getEventStream(sessionId, options) {
       return await runtime.getEventStream(sessionId, options);
     },

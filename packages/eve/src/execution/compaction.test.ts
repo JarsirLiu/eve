@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
-import { preserveFrameworkStateOnCompaction } from "#execution/compaction.js";
+import { forceCompactMessages, preserveFrameworkStateOnCompaction } from "#execution/compaction.js";
 import { ReadFileStateKey } from "#runtime/framework-tools/file-state.js";
 import { TodoStateKey } from "#runtime/framework-tools/todo.js";
 
@@ -39,5 +39,30 @@ describe("preserveFrameworkStateOnCompaction", () => {
   it("returns no messages when there is no todo list", () => {
     const { messages } = run(() => {});
     expect(messages).toEqual([]);
+  });
+});
+
+describe("forceCompactMessages", () => {
+  it("runs the shared compaction pipeline without threshold admission", async () => {
+    const result = await forceCompactMessages({
+      config: { recentWindowSize: 0, threshold: 100_000 },
+      messages: [
+        {
+          content: [
+            {
+              output: { type: "text", value: "x".repeat(20_000) },
+              toolCallId: "call-1",
+              toolName: "search",
+              type: "tool-result",
+            },
+          ],
+          role: "tool",
+        },
+      ],
+      model: {} as never,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.messages).toHaveLength(1);
   });
 });

@@ -28,6 +28,8 @@ export type SessionStateMap = Readonly<Record<string, unknown>>;
  * Compaction configuration stored on the session.
  */
 export interface CompactionConfig {
+  readonly lastManualCommandId?: string;
+  readonly lastManualChanged?: boolean;
   readonly lastKnownInputTokens?: number;
   readonly lastKnownPromptMessageCount?: number;
   readonly recentWindowSize: number;

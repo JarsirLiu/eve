@@ -9,7 +9,11 @@ import {
   turnWorkflowReference,
   workflowEntryReference,
 } from "#execution/workflow-runtime.js";
-import { isRuntimeNoActiveSessionError } from "#execution/runtime-errors.js";
+import {
+  isRuntimeNoActiveSessionError,
+  RuntimeCompactionConflictError,
+  RuntimeSessionNotFoundError,
+} from "#execution/runtime-errors.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 
@@ -180,6 +184,44 @@ describe("createWorkflowRuntime#cancelTurn", () => {
     resumeHookMock.mockRejectedValue(failure);
 
     await expect(buildRuntime().cancelTurn({ sessionId: "session-1" })).rejects.toBe(failure);
+  });
+});
+
+describe("createWorkflowRuntime#requestCompaction", () => {
+  function buildRuntime() {
+    return createWorkflowRuntime({ compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource });
+  }
+
+  it("admits a command for an existing parked session", async () => {
+    getRunMock.mockReturnValue({ exists: Promise.resolve(true) });
+    resumeHookMock.mockResolvedValue({ runId: "session-1" });
+
+    await expect(
+      buildRuntime().requestCompaction?.({ commandId: "command-1", sessionId: "session-1" }),
+    ).resolves.toEqual({ commandId: "command-1", status: "accepted" });
+    expect(resumeHookMock).toHaveBeenCalledWith("session-1:compact", {
+      commandId: "command-1",
+      kind: "compact",
+    });
+  });
+
+  it("maps an active session to a compaction conflict", async () => {
+    getRunMock.mockReturnValue({ exists: Promise.resolve(true) });
+    const { HookNotFoundError } = await import("#compiled/@workflow/errors/index.js");
+    resumeHookMock.mockRejectedValue(new HookNotFoundError("session-1:compact"));
+
+    await expect(
+      buildRuntime().requestCompaction?.({ sessionId: "session-1" }),
+    ).rejects.toBeInstanceOf(RuntimeCompactionConflictError);
+  });
+
+  it("maps an unknown session to not found", async () => {
+    getRunMock.mockReturnValue({ exists: Promise.resolve(false) });
+
+    await expect(
+      buildRuntime().requestCompaction?.({ sessionId: "missing-session" }),
+    ).rejects.toBeInstanceOf(RuntimeSessionNotFoundError);
+    expect(resumeHookMock).not.toHaveBeenCalled();
   });
 });
 

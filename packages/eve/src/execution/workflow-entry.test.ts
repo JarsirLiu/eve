@@ -53,6 +53,13 @@ vi.mock("./delegated-parent-notification.js", () => ({
 }));
 
 vi.mock("./workflow-steps.js", () => ({
+  compactSessionStep: vi.fn().mockResolvedValue({
+    changed: false,
+    modelId: "test/model",
+    ok: true,
+    serializedContext: { "eve.sessionId": "wrun_test_123" },
+    sessionState: createSessionStateForMock(),
+  }),
   dispatchTurnStep: vi.fn().mockImplementation(async () => ({ runId: "turn-run" })),
 }));
 
@@ -404,6 +411,9 @@ describe("workflowEntry", () => {
       if (token.endsWith(":auth")) {
         return createMockHook({ token, values: [] }) as never;
       }
+      if (token.endsWith(":compact")) {
+        return createMockHook({ token, values: [] }) as never;
+      }
       return createMockHook({
         token,
         values: [
@@ -460,6 +470,9 @@ describe("workflowEntry", () => {
         }) as never;
       }
       if (token.endsWith(":auth")) {
+        return createMockHook({ token, values: [] }) as never;
+      }
+      if (token.endsWith(":compact")) {
         return createMockHook({ token, values: [] }) as never;
       }
       return createMockHook({
@@ -872,6 +885,10 @@ function installHookMocks(input: {
       }) as never;
     }
 
+    if (token.endsWith(":compact")) {
+      return createMockHook({ token, values: [] }) as never;
+    }
+
     const config = deliveryHooks.shift() ?? { token, values: [] };
     if (config.token !== token) {
       throw new Error(`Expected delivery hook token "${config.token}", received "${token}".`);
@@ -940,7 +957,10 @@ function nonTurnHookTokens(): string[] {
     .mock.calls.map((call) => call[0]?.token)
     .filter(
       (token): token is string =>
-        token !== undefined && !token.endsWith(":auth") && !isTurnCompletionToken(token),
+        token !== undefined &&
+        !token.endsWith(":auth") &&
+        !token.endsWith(":compact") &&
+        !isTurnCompletionToken(token),
     );
 }
 

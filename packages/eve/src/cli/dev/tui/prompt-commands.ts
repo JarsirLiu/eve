@@ -11,6 +11,7 @@ type PromptCommandTarget = "local" | "remote";
 /** The slash commands the prompt accepts. */
 export type PromptCommand =
   | { type: "new" }
+  | { type: "compact" }
   | { type: "exit" }
   | { type: "help" }
   | { type: "loglevel"; argument: string }
@@ -61,6 +62,14 @@ const PROMPT_COMMAND_DEFINITIONS = [
     description: "Start a fresh session",
     takesArgument: false,
     build: () => ({ type: "new" }),
+    targets: ["local", "remote"],
+  },
+  {
+    name: "compact",
+    aliases: [],
+    description: "Compact the current session context",
+    takesArgument: false,
+    build: () => ({ type: "compact" }),
     targets: ["local", "remote"],
   },
   {

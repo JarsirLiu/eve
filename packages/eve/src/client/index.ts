@@ -88,6 +88,7 @@ export type {
   AssistantStepFinishReason,
   AuthorizationOutcome,
   CompactionCompletedStreamEvent,
+  CompactionFailedStreamEvent,
   CompactionRequestedStreamEvent,
   AuthorizationCompletedStreamEvent,
   ConnectionAuthorizationOutcome,

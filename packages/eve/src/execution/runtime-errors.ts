@@ -21,3 +21,27 @@ export function isRuntimeNoActiveSessionError(
 ): error is RuntimeNoActiveSessionError {
   return error instanceof RuntimeNoActiveSessionError;
 }
+
+/** Thrown when a manual compaction targets a session that is not parked. */
+export class RuntimeCompactionConflictError extends Error {
+  readonly code = "ACTIVE_TURN" as const;
+  readonly sessionId: string;
+
+  constructor(sessionId: string) {
+    super(`Session "${sessionId}" is not parked and cannot be compacted.`);
+    this.name = "RuntimeCompactionConflictError";
+    this.sessionId = sessionId;
+  }
+}
+
+/** Thrown when a manual compaction target does not exist. */
+export class RuntimeSessionNotFoundError extends Error {
+  readonly code = "SESSION_NOT_FOUND" as const;
+  readonly sessionId: string;
+
+  constructor(sessionId: string) {
+    super(`Session "${sessionId}" was not found.`);
+    this.name = "RuntimeSessionNotFoundError";
+    this.sessionId = sessionId;
+  }
+}

@@ -18,6 +18,7 @@ import type { Agent, RouteContext } from "#public/definitions/channel.js";
  */
 export interface MockAgent extends Agent {
   readonly cancelTurn: Mock;
+  readonly requestCompaction: Mock;
   readonly run: Mock;
   readonly deliver: Mock;
   readonly getEventStream: Mock;
@@ -38,6 +39,7 @@ export function createMockAgent(): MockAgent {
     cancelTurn: vi.fn().mockResolvedValue({ status: "no_active_turn" }),
     deliver: vi.fn().mockResolvedValue(undefined),
     getEventStream: vi.fn().mockResolvedValue(new ReadableStream()),
+    requestCompaction: vi.fn().mockResolvedValue({ commandId: "command-1", status: "accepted" }),
     run: vi.fn().mockResolvedValue({
       continuationToken: "http:test",
       events: new ReadableStream(),

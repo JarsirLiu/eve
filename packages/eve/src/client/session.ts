@@ -1,9 +1,11 @@
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import { EVE_SESSION_ID_HEADER, isCurrentTurnBoundaryEvent } from "#protocol/message.js";
 import { CancelTurnResponseSchema } from "#protocol/cancel-turn.js";
+import { CompactSessionResponseSchema } from "#protocol/compact-session.js";
 import {
   EVE_CREATE_SESSION_ROUTE_PATH,
   createEveCancelTurnRoutePath,
+  createEveCompactSessionRoutePath,
   createEveContinueSessionRoutePath,
 } from "#protocol/routes.js";
 import { ClientError } from "#client/client-error.js";
@@ -139,6 +141,45 @@ export class ClientSession {
     }
 
     return { sessionId: result.data.sessionId, status: result.data.status };
+  }
+
+  /** Requests compaction of this parked session without creating a model turn. */
+  async compact(options?: {
+    commandId?: string;
+  }): Promise<{ commandId: string; status: "accepted" }> {
+    const sessionId = this.#state.sessionId;
+    if (!sessionId) {
+      throw new Error("Session has no session ID. Send a message first.");
+    }
+
+    const url = createClientUrl(this.#context.host, createEveCompactSessionRoutePath(sessionId));
+    const headers = await this.#context.resolveHeaders();
+    headers.set("content-type", "application/json");
+    const response = await fetch(
+      url,
+      withRedirectPolicy(
+        {
+          headers,
+          method: "POST",
+          body: options === undefined ? undefined : JSON.stringify(options),
+        },
+        this.#context.redirect,
+      ),
+    );
+    const body = await response.text();
+    if (!response.ok) throw new ClientError(response.status, body, response.headers);
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      throw new Error(`Compaction route returned invalid JSON (${response.status}).`);
+    }
+    const result = CompactSessionResponseSchema.safeParse(payload);
+    if (!result.success || result.data.sessionId !== sessionId) {
+      throw new Error(`Compaction route returned an invalid response (${response.status}).`);
+    }
+    return { commandId: result.data.commandId, status: result.data.status };
   }
 
   /**

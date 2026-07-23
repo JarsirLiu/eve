@@ -31,6 +31,18 @@ export interface CancelTurnResult {
   readonly status: CancelTurnStatus;
 }
 
+/** Identifies one manual session-compaction request. */
+export interface CompactSessionInput {
+  readonly commandId?: string;
+  readonly sessionId: string;
+}
+
+/** Result of admitting a manual session-compaction request. */
+export interface CompactSessionResult {
+  readonly commandId: string;
+  readonly status: "accepted";
+}
+
 // ---------------------------------------------------------------------------
 // Lineage
 // ---------------------------------------------------------------------------
@@ -137,6 +149,12 @@ export interface DeliverHookPayload {
   readonly payloads: readonly DeliverPayload[];
 }
 
+/** Serializable command accepted by a parked session's maintenance hook. */
+export interface CompactHookPayload {
+  readonly commandId: string;
+  readonly kind: "compact";
+}
+
 /**
  * Runtime-action results resumed back into a parked parent workflow.
  */
@@ -199,6 +217,7 @@ export interface SubagentAuthorizationEventHookPayload {
  * Serializable payload sent through the workflow `resumeHook`.
  */
 export type HookPayload =
+  | CompactHookPayload
   | DeliverHookPayload
   | RuntimeActionResultHookPayload
   | SubagentAuthorizationEventHookPayload
@@ -382,6 +401,9 @@ export interface Runtime {
 
   /** Requests cancellation of a session's in-flight turn. */
   cancelTurn(input: CancelTurnInput): Promise<CancelTurnResult>;
+
+  /** Requests compaction of a parked conversation session. */
+  requestCompaction?(input: CompactSessionInput): Promise<CompactSessionResult>;
 
   /**
    * Delivers a follow-up message to a parked session.

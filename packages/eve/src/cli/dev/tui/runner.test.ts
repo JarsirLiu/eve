@@ -2605,6 +2605,83 @@ describe("EveTUIRunner boot setup detection", () => {
 });
 
 describe("EveTUIRunner command outcome rendering", () => {
+  it("compacts the current session without sending a model message", async () => {
+    const results: string[] = [];
+    const prompts: Array<string | undefined> = ["/compact", undefined];
+    const session = sessionYielding([]);
+    vi.spyOn(session, "compact").mockResolvedValue({
+      commandId: "compact-1",
+      status: "accepted",
+    });
+    vi.spyOn(session, "stream").mockImplementation(async function* () {
+      yield {
+        type: "compaction.requested",
+        data: {
+          compactionId: "compact-1",
+          modelId: "gpt-5",
+          sequence: 1,
+          sessionId: "session_test",
+          trigger: "manual",
+          usageInputTokens: null,
+        },
+      } as HandleMessageStreamEvent;
+      yield {
+        type: "compaction.completed",
+        data: {
+          changed: true,
+          compactionId: "compact-1",
+          modelId: "gpt-5",
+          sequence: 2,
+          sessionId: "session_test",
+          trigger: "manual",
+        },
+      } as HandleMessageStreamEvent;
+    });
+
+    const renderer: AgentTUIRenderer = {
+      readPrompt: vi.fn(async () => prompts.shift()),
+      renderCommandResult: (text) => results.push(text),
+      renderStream: vi.fn(async () => {}),
+    };
+
+    const runner = new EveTUIRunner({ session, renderer, name: "Weather Agent" });
+    await runner.run();
+
+    expect(session.compact).toHaveBeenCalledTimes(1);
+    expect(session.stream).toHaveBeenCalledTimes(1);
+    expect(session.send).not.toHaveBeenCalled();
+    expect(results).toEqual([
+      "Compaction requested.",
+      "Compaction started.",
+      "Compaction complete.",
+    ]);
+  });
+
+  it("reports an active-turn conflict without starting a model message", async () => {
+    const results: string[] = [];
+    const prompts: Array<string | undefined> = ["/compact", undefined];
+    const session = sessionYielding([]);
+    vi.spyOn(session, "stream");
+    vi.spyOn(session, "compact").mockRejectedValue(
+      new ClientError(409, JSON.stringify({ error: "active_turn" })),
+    );
+
+    const renderer: AgentTUIRenderer = {
+      readPrompt: vi.fn(async () => prompts.shift()),
+      renderCommandResult: (text) => results.push(text),
+      renderStream: vi.fn(async () => {}),
+    };
+
+    const runner = new EveTUIRunner({ session, renderer, name: "Weather Agent" });
+    await runner.run();
+
+    expect(results).toEqual([
+      "Cannot compact while a turn is active. Wait for the reply to finish, then try /compact again.",
+    ]);
+    expect(session.send).not.toHaveBeenCalled();
+    expect(session.stream).not.toHaveBeenCalled();
+  });
+
   it("answers /help with the command table even without a command handler", async () => {
     const results: string[] = [];
     const prompts: Array<string | undefined> = ["/help", undefined];

@@ -3,6 +3,7 @@ import { createHook, getWorkflowMetadata, getWritable } from "#compiled/@workflo
 import type {
   DeliverHookPayload,
   DeliverPayload,
+  CompactHookPayload,
   HookPayload,
   RunInput,
   SessionCapabilities,
@@ -31,6 +32,20 @@ import {
   type SessionDeliveryHook,
 } from "#execution/session-delivery-hook.js";
 import { readSerializedSubagentDepth } from "#harness/subagent-depth.js";
+import {
+  createSessionCompactionHook,
+  type SessionCompactionHook,
+} from "#execution/session-compaction-hook.js";
+import { compactSessionStep } from "#execution/workflow-steps.js";
+import {
+  createCompactionFailedEvent,
+  createCompactionRequestedEvent,
+  createCompactionCompletedEvent,
+  encodeMessageStreamEvent,
+  timestampHandleMessageStreamEvent,
+} from "#protocol/message.js";
+import { rebuildSerializableError } from "#execution/workflow-errors.js";
+import { CompactionModelIdKey } from "#context/keys.js";
 
 // workflow-entry.ts is the durable workflow body — the bundler rejects
 // node built-ins here, so `internal/logging.ts` cannot be imported.
@@ -167,6 +182,7 @@ async function runDriverLoop(input: {
 
   const bufferedDeliveries: DeliverHookPayload[] = [];
   const deliveryHook = createSessionDeliveryHook(bufferedDeliveries);
+  let compactionHook: SessionCompactionHook | undefined;
 
   // Control-hook disposal is deferred one turn — see DispatchedTurn.
   let disposeSettledTurnControl: (() => Promise<void>) | undefined;
@@ -266,10 +282,47 @@ async function runDriverLoop(input: {
         continue;
       }
 
-      const nextDeliver = await waitForNextDeliver({
-        bufferedDeliveries,
+      compactionHook = await createSessionCompactionHook(action.sessionState.sessionId);
+      const command = await waitForNextSessionCommand({
+        compactionHook,
         deliveryHook,
+        bufferedDeliveries,
       });
+
+      if (command === null) {
+        await compactionHook.dispose();
+        compactionHook = undefined;
+        return { output: "" };
+      }
+
+      if (command.kind === "compact") {
+        compactionHook.consumeNext();
+        await compactionHook.dispose();
+        compactionHook = undefined;
+        action = await runManualCompaction({
+          command,
+          driverWritable: input.driverWritable,
+          serializedContext: action.serializedContext,
+          sessionState: action.sessionState,
+        });
+        continue;
+      }
+
+      const committedCompaction = await compactionHook.dispose();
+      compactionHook = undefined;
+
+      if (committedCompaction !== undefined) {
+        bufferedDeliveries.unshift(command);
+        action = await runManualCompaction({
+          command: committedCompaction,
+          driverWritable: input.driverWritable,
+          serializedContext: action.serializedContext,
+          sessionState: action.sessionState,
+        });
+        continue;
+      }
+
+      const nextDeliver = command;
 
       if (nextDeliver === null) {
         return { output: "" };
@@ -299,12 +352,112 @@ async function runDriverLoop(input: {
       });
     }
   } finally {
+    await compactionHook?.dispose();
     await disposeSettledTurnControl?.();
     await deliveryHook.dispose();
     // Dispose without closing the iterator: a session cancelled while
     // awaiting authorization can leave a durable read in flight, and an
     // async iterator only honors `return()` after that read settles.
     await disposeHook(authHook);
+  }
+}
+
+async function waitForNextSessionCommand(input: {
+  readonly bufferedDeliveries: DeliverHookPayload[];
+  readonly compactionHook: SessionCompactionHook;
+  readonly deliveryHook: SessionDeliveryHook;
+}): Promise<DeliverHookPayload | CompactHookPayload | null> {
+  const delivery = waitForNextDeliver(input);
+  const compaction = input.compactionHook.next();
+  const winner = await Promise.race([
+    delivery.then((value) => ({ kind: "deliver" as const, value })),
+    compaction.then((result) => ({ kind: "compact" as const, result })),
+  ]);
+
+  if (winner.kind === "compact") {
+    if (winner.result.done) {
+      return await delivery;
+    }
+    return winner.result.value;
+  }
+  return winner.value;
+}
+
+async function runManualCompaction(input: {
+  readonly command: CompactHookPayload;
+  readonly driverWritable: WritableStream<Uint8Array>;
+  readonly serializedContext: Record<string, unknown>;
+  readonly sessionState: DurableSessionState;
+}): Promise<NextDriverAction & { readonly kind: "park" }> {
+  const state = input.sessionState;
+  const emission = state.emissionState;
+  const compactionId = input.command.commandId;
+  const configuredModelId =
+    (input.serializedContext[CompactionModelIdKey.name] as string | undefined) ?? "unknown";
+  await emitDriverCompactionEvent(
+    input.driverWritable,
+    createCompactionRequestedEvent({
+      compactionId,
+      modelId: configuredModelId,
+      sequence: emission.sequence,
+      sessionId: state.sessionId,
+      trigger: "manual",
+      usageInputTokens: undefined,
+    }),
+  );
+
+  const result = await compactSessionStep({
+    commandId: compactionId,
+    serializedContext: input.serializedContext,
+    sessionState: state,
+  });
+
+  if (!result.ok) {
+    const error = rebuildSerializableError(result.error);
+    await emitDriverCompactionEvent(
+      input.driverWritable,
+      createCompactionFailedEvent({
+        code: error.name,
+        compactionId,
+        message: error.message,
+        sequence: emission.sequence,
+        sessionId: state.sessionId,
+      }),
+    );
+    return {
+      kind: "park",
+      serializedContext: input.serializedContext,
+      sessionState: state,
+    };
+  }
+
+  await emitDriverCompactionEvent(
+    input.driverWritable,
+    createCompactionCompletedEvent({
+      changed: result.changed,
+      compactionId,
+      modelId: result.modelId,
+      sequence: result.sessionState.emissionState.sequence,
+      sessionId: state.sessionId,
+      trigger: "manual",
+    }),
+  );
+  return {
+    kind: "park",
+    serializedContext: result.serializedContext,
+    sessionState: result.sessionState,
+  };
+}
+
+async function emitDriverCompactionEvent(
+  writable: WritableStream<Uint8Array>,
+  event: Parameters<typeof timestampHandleMessageStreamEvent>[0],
+): Promise<void> {
+  const writer = writable.getWriter();
+  try {
+    await writer.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(event)));
+  } finally {
+    writer.releaseLock();
   }
 }
 
