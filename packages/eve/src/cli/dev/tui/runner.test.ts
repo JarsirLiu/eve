@@ -604,6 +604,9 @@ describe("EveTUIRunner development session continuity", () => {
 
   it("starts a fresh session only after an explicit /new command", async () => {
     const initialSession = sessionYielding([{ type: "session.waiting" }]);
+    const reset = vi
+      .spyOn(initialSession, "reset")
+      .mockResolvedValue({ previousSessionId: "session_1", status: "reset" });
     const newSession = sessionYielding([{ type: "session.waiting" }]);
     const client = stubClient();
     const createSession = vi.spyOn(client, "session").mockReturnValue(newSession);
@@ -625,8 +628,65 @@ describe("EveTUIRunner development session continuity", () => {
     await runner.run();
 
     expect(createSession).toHaveBeenCalledOnce();
+    expect(reset).toHaveBeenCalledOnce();
     expect(initialSession.send).toHaveBeenCalledOnce();
     expect(newSession.send).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the current transcript and session when /new cannot reset the owner", async () => {
+    const session = sessionYielding([]);
+    const reset = vi.spyOn(session, "reset").mockRejectedValue(new Error("World unavailable"));
+    const resetRenderer = vi.fn();
+    const notices: string[] = [];
+    const prompts: Array<string | undefined> = ["/new", undefined];
+    const runner = new EveTUIRunner({
+      name: "Weather Agent",
+      renderer: fakeRenderer({
+        readPrompt: vi.fn(async () => prompts.shift()),
+        renderNotice: (message) => notices.push(message),
+        reset: resetRenderer,
+      }),
+      session,
+    });
+
+    await runner.run();
+
+    expect(reset).toHaveBeenCalledOnce();
+    expect(resetRenderer).not.toHaveBeenCalled();
+    expect(notices).toEqual(["Couldn't reset the session: World unavailable"]);
+  });
+
+  it("resets rather than sending a queued /new after a turn boundary", async () => {
+    const initialSession = sessionYielding([{ type: "session.waiting" }]);
+    const reset = vi
+      .spyOn(initialSession, "reset")
+      .mockResolvedValue({ previousSessionId: "session_1", status: "reset" });
+    const newSession = sessionYielding([]);
+    const client = stubClient();
+    const createSession = vi.spyOn(client, "session").mockReturnValue(newSession);
+    const prompts: Array<string | undefined> = ["first", undefined];
+    const renderer = fakeRenderer({
+      readPrompt: vi.fn(async () => prompts.shift()),
+      renderStream: vi.fn(async (result) => {
+        for await (const event of result.events as AsyncIterable<unknown>) {
+          void event;
+        }
+      }),
+      takeQueuedPrompt: vi.fn(() => "/new"),
+    });
+    const runner = new EveTUIRunner({
+      client,
+      name: "Weather Agent",
+      renderer,
+      session: initialSession,
+    });
+
+    await runner.run();
+
+    expect(reset).toHaveBeenCalledOnce();
+    expect(createSession).toHaveBeenCalledOnce();
+    expect(initialSession.send).toHaveBeenCalledOnce();
+    expect(newSession.send).not.toHaveBeenCalled();
   });
 });
 
