@@ -249,6 +249,13 @@ export const INTEGRATIONS: readonly IntegrationEntry[] = [
     surfaces: { scaffoldable: false, gallery: true },
   },
   {
+    slug: "chat-sdk-beeper",
+    name: "Beeper",
+    kind: "channel",
+    tagline: "Matrix rooms and bridged messaging networks through Beeper.",
+    surfaces: { scaffoldable: false, gallery: true },
+  },
+  {
     slug: "agent-browser",
     name: "agent-browser",
     kind: "extension",
