@@ -390,6 +390,15 @@ export const kapsoLogo = (props: LogoProps) => (
   </svg>
 );
 
+export const photonLogo = (props: LogoProps) => (
+  <svg fill="none" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <path
+      d="m34 13-4 16h9l4-16h-9Zm-17 13-4 16h9l4-16h-9Zm16 10-4 16h9l4-16h-9Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
 export const googlechatLogo = (props: LogoProps) => <SiGooglechat color="default" {...props} />;
 
 export const whatsappLogo = (props: LogoProps) => <SiWhatsapp color="default" {...props} />;
@@ -533,6 +542,7 @@ export const logos = {
   liveblocks: liveblocksLogo,
   linq: linqLogo,
   kapso: kapsoLogo,
+  photon: photonLogo,
   googlechat: googlechatLogo,
   whatsapp: whatsappLogo,
   messenger: messengerLogo,
